@@ -13,13 +13,16 @@ Repo: https://github.com/Aaditya17032002/slot-booking
 | Secrets | GitHub Actions secrets (not on the VM disk) |
 | VM pull | Docker Hub **read-only** PAT |
 
-## Local
+## Local (Windows)
 
 ```bash
 python scripts/login.py
-python scripts/check_slots.py
 python scripts/monitor.py
 ```
+
+## Firefox phone monitor (userscript)
+
+See [docs/FIREFOX_USERSCRIPT.md](docs/FIREFOX_USERSCRIPT.md) — Tampermonkey on Firefox Android, real browser session + Telegram.
 
 ## CI/CD
 
