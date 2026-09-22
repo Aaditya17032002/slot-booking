@@ -1,0 +1,32 @@
+services:
+  # Optional local/VNC bootstrap only — production deploy uses `docker run` from CI
+  usvisa-monitor:
+    image: ghcr.io/${GHCR_OWNER:-local}/us-visa-monitor:latest
+    build: .
+    container_name: usvisa-monitor
+    restart: unless-stopped
+    shm_size: "2gb"
+    environment:
+      BROWSER_MODE: cdp
+      HEADLESS: "false"
+      CDP_PORT: "9222"
+      NOTIFY_EVERY_CHECK: "true"
+      DISPLAY: ":99"
+      # Secrets: pass via `docker compose --env-file` from CI, never commit
+      USVISA_USERNAME: ${USVISA_USERNAME}
+      USVISA_PASSWORD: ${USVISA_PASSWORD}
+      SECURITY_A_PET: ${SECURITY_A_PET}
+      SECURITY_A_FOOD: ${SECURITY_A_FOOD}
+      SECURITY_A_WORK: ${SECURITY_A_WORK}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
+      CONSULATES: ${CONSULATES:-Kolkata,Mumbai}
+      VISA_CATEGORY: ${VISA_CATEGORY:-B1/B2}
+      VISA_TYPE: ${VISA_TYPE:-Regular}
+    volumes:
+      - usvisa-profile:/app/browser_profile
+      - usvisa-data:/app/data
+
+volumes:
+  usvisa-profile:
+  usvisa-data:

@@ -1,0 +1,17 @@
+# Build context hygiene — never bake secrets or local profiles into the image
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+browser_profile/
+data/
+screenshots/
+.git/
+.github/
+*.md
+.pytest_cache/
+__pycache__/
+*.pyc
+.idea/
+.vscode/

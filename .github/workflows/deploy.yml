@@ -1,0 +1,150 @@
+name: Build and deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE_NAME: us-visa-monitor
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image name
+        id: meta
+        run: |
+          OWNER=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')
+          echo "image=ghcr.io/${OWNER}/${IMAGE_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image }}:latest
+            ${{ steps.meta.outputs.image }}:${{ github.sha }}
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH (secrets injected at runtime, not stored on disk)
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          IMAGE: ${{ needs.build-and-push.outputs.image }}:latest
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          USVISA_USERNAME: ${{ secrets.USVISA_USERNAME }}
+          USVISA_PASSWORD: ${{ secrets.USVISA_PASSWORD }}
+          SECURITY_A_PET: ${{ secrets.SECURITY_A_PET }}
+          SECURITY_A_FOOD: ${{ secrets.SECURITY_A_FOOD }}
+          SECURITY_A_WORK: ${{ secrets.SECURITY_A_WORK }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          CONSULATES: ${{ secrets.CONSULATES }}
+          VISA_CATEGORY: ${{ secrets.VISA_CATEGORY }}
+          VISA_TYPE: ${{ secrets.VISA_TYPE }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+          # Remote script receives env via SSH SendEnv is unreliable;
+          # we pass a base64-encoded env blob so nothing is written as .env on the host.
+          ENV_BLOB=$(python3 - <<'PY'
+          import os, base64
+          keys = [
+            "USVISA_USERNAME","USVISA_PASSWORD",
+            "SECURITY_A_PET","SECURITY_A_FOOD","SECURITY_A_WORK",
+            "TELEGRAM_BOT_TOKEN","TELEGRAM_CHAT_ID",
+            "CONSULATES","VISA_CATEGORY","VISA_TYPE",
+          ]
+          lines = []
+          for k in keys:
+              v = os.environ.get(k, "")
+              # escape for docker --env-file style
+              v = v.replace("\\", "\\\\").replace("\n", "\\n")
+              lines.append(f"{k}={v}")
+          # runtime defaults (not secrets)
+          lines += [
+            "BROWSER_MODE=cdp",
+            "HEADLESS=false",
+            "CDP_PORT=9222",
+            "NOTIFY_EVERY_CHECK=true",
+            "SESSION_DIR=/app/browser_profile",
+            "STATE_FILE=/app/data/slot_state.json",
+            "BASE_URL=https://www.usvisascheduling.com/en-US/",
+            "POLL_MIN_SECONDS=180",
+            "POLL_MAX_SECONDS=420",
+          ]
+          print(base64.b64encode("\n".join(lines).encode()).decode())
+          PY
+          )
+
+          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes "${SSH_USER}@${SSH_HOST}" \
+            IMAGE="$IMAGE" GHCR_USER="$GHCR_USER" GHCR_TOKEN="$GHCR_TOKEN" ENV_BLOB="$ENV_BLOB" \
+            bash -s <<'REMOTE'
+          set -euo pipefail
+
+          # Install Docker once if missing
+          if ! command -v docker >/dev/null 2>&1; then
+            echo "Installing Docker…"
+            curl -fsSL https://get.docker.com | sudo sh
+            sudo usermod -aG docker "$USER" || true
+          fi
+
+          echo "$GHCR_TOKEN" | sudo docker login ghcr.io -u "$GHCR_USER" --password-stdin
+          sudo docker pull "$IMAGE"
+
+          # Ephemeral env file inside /dev/shm (RAM) — wiped after container start
+          ENV_FILE="/dev/shm/usvisa.env.$$"
+          echo "$ENV_BLOB" | base64 -d > "$ENV_FILE"
+          chmod 600 "$ENV_FILE"
+
+          sudo docker stop usvisa-monitor 2>/dev/null || true
+          sudo docker rm usvisa-monitor 2>/dev/null || true
+
+          # Named volumes keep session cookies only (not your GitHub secrets)
+          sudo docker volume create usvisa-profile >/dev/null
+          sudo docker volume create usvisa-data >/dev/null
+
+          sudo docker run -d \
+            --name usvisa-monitor \
+            --restart unless-stopped \
+            --shm-size=2g \
+            --env-file "$ENV_FILE" \
+            -v usvisa-profile:/app/browser_profile \
+            -v usvisa-data:/app/data \
+            "$IMAGE"
+
+          shred -u "$ENV_FILE" 2>/dev/null || rm -f "$ENV_FILE"
+          sudo docker logout ghcr.io >/dev/null 2>&1 || true
+
+          echo "Deployed: $IMAGE"
+          sudo docker ps --filter name=usvisa-monitor --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'
+          REMOTE
+
+          rm -f ~/.ssh/deploy_key

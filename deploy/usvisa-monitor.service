@@ -1,0 +1,19 @@
+[Unit]
+Description=US Visa Slot Monitor (alert-only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/usvisa-monitor
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/opt/usvisa-monitor/.env
+ExecStart=/opt/usvisa-monitor/.venv/bin/python /opt/usvisa-monitor/main.py
+Restart=always
+RestartSec=30
+# Soft resource limits
+Nice=10
+
+[Install]
+WantedBy=multi-user.target
