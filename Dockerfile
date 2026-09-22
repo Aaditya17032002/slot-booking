@@ -17,6 +17,9 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
       xvfb \
       x11-utils \
+      x11vnc \
+      novnc \
+      websockify \
       curl \
       gnupg \
       ca-certificates \

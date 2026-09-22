@@ -132,6 +132,9 @@ jobs:
             --restart unless-stopped \
             --shm-size=2g \
             --env-file "$ENV_FILE" \
+            -e MODE=monitor \
+            -e ENABLE_VNC=true \
+            -p 127.0.0.1:6080:6080 \
             -v usvisa-profile:/app/browser_profile \
             -v usvisa-data:/app/data \
             "$IMAGE"
